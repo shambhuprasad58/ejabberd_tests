@@ -75,9 +75,12 @@ end_per_testcase(CaseName, Config) ->
 %% without using the alarms application.
 %% Alice - the watchdog admin - should receive an xmpp  notification.
 test_notification(Config) ->
-    escalus:story(Config, [1], fun test_notification_story/1).
+    NodeStr = node_name(Config),
+    escalus:story(Config, [1], fun(Alice)-> 
+                                       test_notification_story(Alice,NodeStr)
+                               end).
 
-test_notification_story(Alice) ->
+test_notification_story(Alice,NodeStr) ->
     add_watchdog_admin(Alice),
 
     Pid = rpc(erlang, whereis, [mnesia_tm]),
@@ -87,32 +90,35 @@ test_notification_story(Alice) ->
     Stanza = escalus_client:wait_for_stanza(Alice),
     escalus:assert(is_chat_message, Stanza),
     Msg = exml_query:path(Stanza, [{element, <<"body">>}, cdata]),
-    ExpectedMsg = io_lib:format("(ejabberd@localhost) The process ~s"
+    ExpectedMsg = io_lib:format("(~s) The process ~s"
                                 " is consuming too much memory:\ndummy_info",
-                                [PidStr]),
+                                [NodeStr,PidStr]),
     [{0, _}] = binary:matches(Msg, iolist_to_binary(ExpectedMsg)),
     true.
 
 %% Spawns a process that causes large_heap alarm.
 %% Alice - the watchdog admin - kills the process using xmpp.
 test_kill(Config) ->
-    escalus:story(Config, [1], fun test_kill_story/1).
-
-test_kill_story(Alice) ->
+    NodeStr = node_name(Config),
+    escalus:story(Config, [1], fun(Alice)-> 
+                                       test_kill_story(Alice,NodeStr)
+                               end).
+ 
+test_kill_story(Alice, NodeStr) ->
     add_watchdog_admin(Alice),
     Pid = rpc(system_monitor_SUITE, use_memory, [150000, 100000]),
     PidStr = rpc(erlang, pid_to_list, [Pid]),
     Stanza = escalus_client:wait_for_stanza(Alice),
     escalus:assert(is_stanza_from, [?WATCHDOG_JID], Stanza),
-    test_kill_consume_large_heap_message(PidStr, Stanza),
+    test_kill_consume_large_heap_message(PidStr, NodeStr, Stanza),
     {status, _} = rpc(erlang, process_info, [Pid, status]),
 
     % Alice decides to kill the process
-    Cmd = iolist_to_binary(["kill ejabberd@localhost ", PidStr]),
+    Cmd = iolist_to_binary(["kill ", NodeStr, " ", PidStr]),
     escalus:send(Alice, escalus_stanza:chat_to(?WATCHDOG_JID, Cmd)),
-    test_kill_wait_for_ok(Alice, Pid, PidStr).
+    test_kill_wait_for_ok(Alice, Pid, NodeStr, PidStr).
 
-test_kill_wait_for_ok(Alice, Pid, PidStr) ->
+test_kill_wait_for_ok(Alice, Pid, NodeStr, PidStr) ->
     Stanza = escalus_client:wait_for_stanza(Alice),
     escalus:assert(is_stanza_from, [?WATCHDOG_JID], Stanza),
     case escalus_pred:is_chat_message(<<"ok">>, Stanza) of
@@ -121,37 +127,39 @@ test_kill_wait_for_ok(Alice, Pid, PidStr) ->
             true;
         false ->
             % There might be more large heap messages
-            test_kill_consume_large_heap_message(PidStr, Stanza),
-            test_kill_wait_for_ok(Alice, Pid, PidStr)
+            test_kill_consume_large_heap_message(PidStr, NodeStr, Stanza),
+            test_kill_wait_for_ok(Alice, Pid, NodeStr, PidStr)
     end.
 
-test_kill_consume_large_heap_message(PidStr, Stanza) ->
+test_kill_consume_large_heap_message(PidStr, NodeStr, Stanza) ->
     escalus:assert(is_chat_message, Stanza),
     Msg = exml_query:path(Stanza, [{element, <<"body">>}, cdata]),
     ct:log("consume ~p~n",[Stanza]),
-    ExpectedMsg = io_lib:format("(ejabberd@localhost) The process ~s"
+    ExpectedMsg = io_lib:format("(~s) The process ~s"
                                 " is consuming too much memory:",
-                                [PidStr]),
+                                [NodeStr, PidStr]),
     [{0, _}] = binary:matches(Msg, iolist_to_binary(ExpectedMsg)).
 
 %% Alice - the watchdog admin - changes large_heap threshold
 test_get_set_large_heap(Config) ->
+    LH = ?config(large_heap, Config),
+    NodeStr = node_name(Config),
     escalus:story(Config, [1],
                   fun(Alice) ->
-                          test_get_set_large_heap_story(Config, Alice)
+                          test_get_set_large_heap_story(Alice, NodeStr, LH)
                   end).
 
-test_get_set_large_heap_story(Config, Alice) ->
+test_get_set_large_heap_story(Alice, NodeStr, LH) ->
     add_watchdog_admin(Alice),
-    GetCmd = "showlh ejabberd@localhost",
+    GetCmd = "showlh " ++ NodeStr,
     Stanza1 = escalus:send_and_wait(Alice, escalus_stanza:chat_to(
                                              ?WATCHDOG_JID, GetCmd)),
     escalus:assert(is_stanza_from, [?WATCHDOG_JID], Stanza1),
-    LH = ?config(large_heap, Config),
+
     escalus:assert(is_chat_message, [fmt("Current large heap: ~p", [LH])],
                    Stanza1),
     NewLH = 200000,
-    SetCmd = fmt("setlh ejabberd@localhost ~p", [NewLH]),
+    SetCmd = fmt("setlh ~s ~p", [NodeStr, NewLH]),
     Stanza2 = escalus:send_and_wait(Alice, escalus_stanza:chat_to(
                                              ?WATCHDOG_JID, SetCmd)),
     escalus:assert(is_stanza_from, [?WATCHDOG_JID], Stanza2),
@@ -193,6 +201,9 @@ use_memory(HowMuch, HowLong) ->
                   timer:sleep(HowLong),
                   L
           end).
+
+node_name(Config) ->
+    atom_to_list(escalus_config:get_config(ejabberd_node, Config)).
 
 rpc(M, F, A) ->
     Node = ct:get_config(ejabberd_node),
