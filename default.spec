@@ -16,6 +16,6 @@
 {suites, "tests", metrics_roster_SUITE}.
 {suites, "tests", metrics_register_SUITE}.
 {suites, "tests", metrics_session_SUITE}.
-{skip_suites, "tests", system_monitor_SUITE, "TODO: fix hard-coded node ids"}.
+{suites, "tests", system_monitor_SUITE}.
 {config, ["test.config"]}.
 {logdir, "ct_report"}.
