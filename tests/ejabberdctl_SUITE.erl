@@ -57,7 +57,8 @@ sessions() -> [num_resources_num, kick_session, status,
 
 vcard() -> [vcard_rw, vcard2_rw, vcard2_multi_rw].
 
-roster() -> [rosteritem_rw, push_roster, push_roster_all, push_roster_alltoall].
+roster() -> [rosteritem_rw, presence_after_add_rosteritem,
+	     push_roster, push_roster_all, push_roster_alltoall].
 
 last() -> [set_last].
 
@@ -79,7 +80,11 @@ init_per_suite(Config) ->
     TemplatePath = Cwd ++ "/roster.template",
 
     start_mod_admin_extra(),
-    NewConfig = escalus:init_per_suite([{ctl_path, EjdWD ++ "/bin/ejabberdctl"},
+    CtlPath = case filelib:is_file(EjdWD ++ "/bin/ejabberdctl") of
+                  true -> EjdWD ++ "/bin/ejabberdctl";
+                  false -> EjdWD ++ "/bin/mongooseimctl"
+              end,
+    NewConfig = escalus:init_per_suite([{ctl_path, CtlPath},
                                         {roster_template, TemplatePath} | Config]),
     escalus:create_users(NewConfig).
 
@@ -149,8 +154,7 @@ ban_account(Config) ->
 
     {ok, Mike} = escalus_client:start_for(Config, mike, <<"newres">>),
     {_, 0} = ejabberdctl("ban_account", [User, Domain, "SomeReason"], Config),
-    {'EXIT', _} = (catch escalus_client:send(Mike,
-                                                 escalus_stanza:chat_to(Mike, <<"Hello myself!">>))),
+    escalus:assert(is_stream_error, [<<"conflict">>, <<"SomeReason">>], escalus:wait_for_stanza(Mike)),
     {error, {connection_step_failed, _, _}} = escalus_client:start_for(Config, mike, <<"newres2">>),
     ejabberdctl("change_password", [User, Domain, Pass], Config).
 
@@ -220,9 +224,7 @@ kick_session(Config) ->
 
                 {_, 0} = ejabberdctl("kick_session", [Username, Domain, Resource, "'\"Because I can!\"'"], Config),
                 Stanza = escalus:wait_for_stanza(Alice),
-                escalus:assert(is_stream_error, [<<"conflict">>, <<"Because I can!">>], Stanza),
-                {'EXIT', _} = (catch escalus_client:send(Alice,
-                                                 escalus_stanza:chat_to(Alice, <<"Hello myself!">>)))
+                escalus:assert(is_stream_error, [<<"conflict">>, <<"Because I can!">>], Stanza)
         end).
 
 status(Config) ->
@@ -354,6 +356,20 @@ rosteritem_rw(Config) ->
 
                 escalus:send(Alice, escalus_stanza:roster_remove_contact(mike))  % cleanup
         end).
+
+presence_after_add_rosteritem(Config) ->
+     escalus:story(Config, [1,1], fun(Alice, Bob) ->
+                 {AliceName, Domain, _} = get_user_data(alice, Config),
+                 {BobName, Domain, _} = get_user_data(bob, Config),
+ 
+                 {_, 0} = ejabberdctl("add_rosteritem", [AliceName, Domain, BobName,
+                                                         Domain, "MyBob", "MyGroup", "both"], Config),
+ 
+                 escalus:send(Alice, escalus_stanza:presence(<<"available">>)),
+                 escalus:assert(is_presence, escalus:wait_for_stanza(Bob)),
+ 
+                 escalus:send(Alice, escalus_stanza:roster_remove_contact(bob))  % cleanup
+         end).
 
 push_roster(Config) ->
     escalus:story(Config, [1], fun(Alice) ->

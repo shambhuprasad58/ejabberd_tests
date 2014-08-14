@@ -1,4 +1,5 @@
 {suites, "tests", adhoc_SUITE}.
+{suites, "tests", amp_SUITE}.
 {suites, "tests", last_SUITE}.
 {suites, "tests", login_SUITE}.
 {suites, "tests", muc_SUITE}.
@@ -20,3 +21,4 @@
 {suites, "tests", carboncopy_SUITE}.
 {config, ["test.config"]}.
 {logdir, "ct_report"}.
+{ct_hooks, [ct_tty_hook]}.
